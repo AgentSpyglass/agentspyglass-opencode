@@ -13,8 +13,8 @@ src/
   window.ts         Spawns/kills the Tauri desktop window.
   command/spyglass.ts   /spyglass command handler.
   handler/event.handler.ts  Converts OpenCode events → wire types → broadcast.
-  holder/session.holder.ts  In-memory session tracker.
-  util/session.util.ts      Session lookup helper.
+  holder/session-storage.service.ts  In-memory session tracker.
+  util/opencode.util.ts      Session lookup helper.
 ```
 
 ## Key Dependencies

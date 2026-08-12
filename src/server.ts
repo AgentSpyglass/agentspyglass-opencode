@@ -2,6 +2,8 @@ import fs from "node:fs/promises"
 import type {Server, ServerWebSocket} from "bun"
 import {OpencodeClient} from "@opencode-ai/sdk"
 import {Event} from "@agentspyglass/core"
+import { todoEventHandle } from "./handler/event.handler"
+import { PluginInput } from "@opencode-ai/plugin"
 
 const PORT = Number(process.env.AGENTSPYGLASS_PORT ?? 51763)
 const HOST = "127.0.0.1"
@@ -9,7 +11,7 @@ const HOST = "127.0.0.1"
 let server: Server<any> | undefined
 const clients = new Set<ServerWebSocket<unknown>>()
 
-export async function startBridge(client: OpencodeClient, sessionId: string) {
+export async function startBridge(plugin: PluginInput, sessionId: string) {
     if (server) return;
 
     server = Bun.serve({
@@ -22,7 +24,7 @@ export async function startBridge(client: OpencodeClient, sessionId: string) {
         websocket: {
             open(ws) {
                 clients.add(ws);
-                populateClient(ws, client, sessionId);
+                populateClient(ws, plugin, sessionId);
             },
             close(ws) {
                 clients.delete(ws);
@@ -53,22 +55,16 @@ export function stopBridge() {
     server = undefined;
 }
 
-function populateClient(ws: ServerWebSocket, client: OpencodeClient, sessionId: string) {
+async function populateClient(ws: ServerWebSocket, plugin: PluginInput, sessionId: string) {
     try {
-        client.session.todo({
+        const {data} = await plugin.client.session.todo({
             path: {
                 id: sessionId,
             }
-        }).then(todo => {
-            ws.send(JSON.stringify({
-                type: 'todo.update',
-                properties: {
-                    todos: todo.data
-                }
-            }));
         });
+        await todoEventHandle({} as any, sessionId, data ?? []);
 
-        client.session.messages({
+        /*client.session.messages({
             path: {
                 id: sessionId,
             }
@@ -87,7 +83,7 @@ function populateClient(ws: ServerWebSocket, client: OpencodeClient, sessionId: 
                     }
                 }
             }
-        })
+        })*/
     } catch {
         clients.delete(ws)
     }

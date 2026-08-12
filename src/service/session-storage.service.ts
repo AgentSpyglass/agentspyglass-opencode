@@ -1,4 +1,4 @@
-import { SessionHold } from "@agentspyglass/core";
+import {SessionHold} from "../model/definitions";
 
 const SESSIONS = new Map<string, SessionHold>();
 
