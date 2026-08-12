@@ -1,8 +1,7 @@
 import {Plugin, PluginInput} from '@opencode-ai/plugin'
-import type {Event, Part, TextPart} from '@opencode-ai/sdk'
+import type {Event, Part, Todo} from '@opencode-ai/sdk/v2'
 import {handleCommand} from './command/spyglass';
-import {agentEventHandle, messageEventHandle, statusEventHandle, toolEventHandle} from "./handler/event.handler";
-import fs from 'fs';
+import {agentEventHandle, messageEventHandle, statusEventHandle, todoEventHandle, toolEventHandle} from "./handler/event.handler";
 
 let SESSION_ID: string | undefined;
 export const AgentSpyglass: Plugin = async (plugin: PluginInput) => {
@@ -32,7 +31,7 @@ export const AgentSpyglass: Plugin = async (plugin: PluginInput) => {
             await toolEventHandle(plugin, input.sessionID, input.callID, input.tool, 'running', output.args);
         },
 
-        "tool.execute.after": async (input: { tool: string; sessionID: string; callID: string; args: any; }, output: any) => {
+        "tool.execute.after": async (input: { tool: string; sessionID: string; callID: string; args: any; }, _: any) => {
             await toolEventHandle(plugin, input.sessionID, input.callID, input.tool, 'completed', input.args);
         },
 
@@ -47,28 +46,44 @@ export const AgentSpyglass: Plugin = async (plugin: PluginInput) => {
 			}
 		},
 
-        event: async (input: {
-            event: Event;
-        }) => {
-            if (input.event.type != 'message.part.updated') return;
-            const part = input.event.properties.part;
-            switch (part.type) {
-                case 'step-start':
-                case 'reasoning':
-                case 'step-finish':
-                    await statusEventHandle(plugin, part.sessionID, part.type);
-                    break;
-                case 'text':
-                    await messageEventHandle(plugin, part.sessionID, (part as TextPart).text);
-                    break;
+        event: async (input: { event: Event }) => {
+            const { event } = input;
+            switch (event.type) {
+                case 'todo.updated':
+                    await todoEventHandle(
+                        plugin,
+                        event.properties.sessionID,
+                        event.properties.todos
+                    );
+                    return;
+
+                case 'message.part.updated':
+                    await handlePartUpdated(plugin, event.properties.part);
+                    return;
+            }
+        }
+
+
+	}
+}
+
+async function handlePartUpdated(plugin: PluginInput, part: Part) {
+    switch (part.type) {
+        case 'step-start':
+        case 'reasoning':
+        case 'step-finish': {
+            let cost: number | undefined;
+            let tokens: number | undefined;
+            if (part.type === 'step-finish') {
+                cost = part.cost;
+                tokens = part.tokens.total;
             }
 
-            const logEntry = JSON.stringify(input);
-            fs.appendFile('events.json', logEntry + '\n', (err) => {
-                if (err) {
-                    console.error('Failed to write logs:', err);
-                }
-            });
+            await statusEventHandle(plugin, part.sessionID, part.type, tokens, cost);
+            break;
         }
-	}
+        case 'text':
+            await messageEventHandle(plugin, part.sessionID, part.text);
+            break;
+    }
 }

@@ -16,7 +16,7 @@ export async function handleCommand(sessionId: string, args: string[], plugin: P
 		return;
 	}
 
-	await startBridge(plugin.client, sessionId);
+	await startBridge(plugin, sessionId);
 	await openWindow(plugin.directory);
     plugin.client.tui.showToast({
         body: {

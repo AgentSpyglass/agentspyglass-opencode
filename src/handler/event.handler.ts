@@ -1,8 +1,9 @@
 import {broadcastEvent} from '../server';
-import {AgentEvent, MessageEvent, StatusEvent, ToolEvent} from "@agentspyglass/core"
-import { getSession, saveSession } from "../holder/session.holder";
-import { findSession } from "../util/session.util";
+import {AgentEvent, MessageEvent, StatusEvent, TodoEvent, ToolEvent} from "@agentspyglass/core"
+import { getSession, saveSession } from "../service/session-storage.service";
+import { findSession } from "../util/opencode.util";
 import { PluginInput } from "@opencode-ai/plugin";
+import { Todo } from '@opencode-ai/sdk/v2';
 
 export async function agentEventHandle(plugin: PluginInput, sessionId: string, name: string, model: string, provider?: string, prompt?: string) {
     const session = await findSession(sessionId, plugin);
@@ -12,7 +13,10 @@ export async function agentEventHandle(plugin: PluginInput, sessionId: string, n
             id: sessionId,
             agent: name,
             model,
-            role
+            role,
+            cost: 0,
+            total: 0,
+            parentId: session?.parentID,
         }
     );
 
@@ -40,13 +44,15 @@ export async function toolEventHandle(plugin: PluginInput, sessionId: string, ca
     } as ToolEvent);
 }
 
-export async function statusEventHandle(plugin: PluginInput, sessionId: string, status: 'step-start' | 'reasoning' | 'step-finish') {
+export async function statusEventHandle(plugin: PluginInput, sessionId: string, status: 'step-start' | 'reasoning' | 'step-finish', tokens?: number, cost?: number) {
     await verifySession(plugin, sessionId);
 
     broadcastEvent({
         type: 'status',
         sessionId,
-        status
+        status,
+        tokens,
+        cost
     } as StatusEvent);
 }
 
@@ -58,6 +64,16 @@ export async function messageEventHandle(plugin: PluginInput, sessionId: string,
         sessionId,
         content
     } as MessageEvent);
+}
+
+export async function todoEventHandle(plugin: PluginInput, sessionId: string, todos: Todo[]) {
+    await verifySession(plugin, sessionId);
+
+    broadcastEvent({
+        type: 'todo',
+        sessionId,
+        todos
+    } as TodoEvent);
 }
 
 async function verifySession(plugin: PluginInput, sessionId: string) {
