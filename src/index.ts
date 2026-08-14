@@ -1,7 +1,10 @@
 import {Plugin, PluginInput} from '@opencode-ai/plugin'
-import type {Event, Part, Todo} from '@opencode-ai/sdk/v2'
+import type {Event, Part, Todo} from '@opencode-ai/sdk'
 import {handleCommand} from './command/spyglass';
 import {agentEventHandle, messageEventHandle, statusEventHandle, todoEventHandle, toolEventHandle} from "./handler/event.handler";
+import {stopBridge} from './server';
+import {stopWindow} from './window';
+import {clearSessions} from './service/session-storage.service';
 
 let SESSION_ID: string | undefined;
 export const AgentSpyglass: Plugin = async (plugin: PluginInput) => {
@@ -9,6 +12,12 @@ export const AgentSpyglass: Plugin = async (plugin: PluginInput) => {
 		config: async (ocConfig) => {
 			ocConfig.command ??= {}
 			ocConfig.command['spyglass'] = {template: 'Do not explain, acknowledge, or comment. Output nothing at all.', description: 'Toggle SpyGlass view.'}
+		},
+
+		dispose: async () => {
+			stopBridge();
+			stopWindow();
+			clearSessions();
 		},
 
 		"chat.message": async (input: { sessionID: string; agent?: string; model?: { providerID: string; modelID: string; }; messageID?: string; variant?: string; }, output: { message: unknown; parts: Part[]; }) => {
@@ -76,7 +85,8 @@ async function handlePartUpdated(plugin: PluginInput, part: Part) {
             let tokens: number | undefined;
             if (part.type === 'step-finish') {
                 cost = part.cost;
-                tokens = part.tokens.total;
+                // v1 StepFinishPart has {input, output, reasoning, cache} - compute total
+                tokens = part.tokens.input + part.tokens.output + part.tokens.reasoning;
             }
 
             await statusEventHandle(plugin, part.sessionID, part.type, tokens, cost);
