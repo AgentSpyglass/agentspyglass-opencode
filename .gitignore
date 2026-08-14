@@ -1,4 +1,8 @@
-node_modules
+node_modules/
+.vscode/
+.idea/
+
 *.tgz
-events.json
 logs.json
+events.json
+history.json
