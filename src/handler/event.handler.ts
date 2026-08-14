@@ -5,14 +5,14 @@ import { findSession } from "../util/opencode.util";
 import { PluginInput } from "@opencode-ai/plugin";
 import { Todo } from '@opencode-ai/sdk/v2';
 
-export async function agentEventHandle(plugin: PluginInput, sessionId: string, name: string, model: string, provider?: string, prompt?: string) {
+export async function agentEventHandle(plugin: PluginInput, sessionId: string, prompt?: string) {
     const session = await findSession(sessionId, plugin);
     const role = session?.parentID? 'subagent' : 'primary'
     saveSession(
         {
             id: sessionId,
-            agent: name,
-            model,
+            agent: session.agent ?? '',
+            model: session.model?.id ?? '',
             role,
             cost: 0,
             total: 0,
@@ -23,9 +23,9 @@ export async function agentEventHandle(plugin: PluginInput, sessionId: string, n
     broadcastEvent({
         type: 'agent',
         sessionId,
-        name,
-        model,
-        provider,
+        name: session.agent ?? '',
+        model: session.model?.id ?? '',
+        provider: session.model?.providerID ?? '',
         prompt,
         role
     } as AgentEvent);
@@ -79,6 +79,6 @@ export async function todoEventHandle(plugin: PluginInput, sessionId: string, to
 async function verifySession(plugin: PluginInput, sessionId: string) {
     const sessionHold = getSession(sessionId);
     if (!sessionHold) {
-        await agentEventHandle(plugin, sessionId, '?', '?', '?', undefined);
+        await agentEventHandle(plugin, sessionId, '?');
     }
 }
