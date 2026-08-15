@@ -2,6 +2,9 @@ import type {Server, ServerWebSocket} from "bun"
 import {Event, AgentEvent, MessageEvent, StatusEvent, ToolEvent, TodoEvent} from "@agentspyglass/core"
 import type {Part} from "@opencode-ai/sdk"
 import { PluginInput } from "@opencode-ai/plugin"
+import {StepFinishPart} from "@opencode-ai/sdk/v2";
+import type {Session, AssistantMessage} from "@opencode-ai/sdk/v2/types";
+import { findSession } from "./util/opencode.util";
 
 const PORT = Number(process.env.AGENTSPYGLASS_PORT ?? 51763)
 const HOST = "127.0.0.1"
@@ -70,6 +73,47 @@ async function populateClient(ws: ServerWebSocket, plugin: PluginInput) {
     if (!sessionId) return;
 
     try {
+        // Fetch session with v2-enriched data (cost, tokens, agent, model)
+        const session = await findSession(sessionId, plugin);
+
+        // Send initial AgentEvent with real agent/model/provider from v2 Session
+        if (session.agent || session.model) {
+            const totalTokens = session.tokens ? session.tokens.input + session.tokens.output + session.tokens.reasoning : 0;
+            if (ws.readyState === 1) {
+                ws.send(JSON.stringify({
+                    type: 'agent',
+                    sessionId,
+                    name: session.agent ?? '',
+                    model: session.model?.id ?? '',
+                    provider: session.model?.providerID ?? '',
+                    prompt: '',
+                    role: session.parentID ? 'subagent' : 'primary',
+                    cost: session.cost ?? 0,
+                    tokens: totalTokens,
+                    targetSessionId: session.parentID,
+                } as AgentEvent & { targetSessionId?: string }));
+            }
+        }
+
+        // Send initial StatusEvent with session-level cost and token totals
+        if ((session.cost !== undefined && session.cost > 0) || session.tokens) {
+            if (ws.readyState === 1) {
+                ws.send(JSON.stringify({
+                    type: 'status',
+                    sessionId,
+                    status: 'step-finish' as const,
+                    cost: session.cost,
+                    tokens: session.tokens ? {
+                        total: session.tokens.input + session.tokens.output + session.tokens.reasoning,
+                        input: session.tokens.input,
+                        output: session.tokens.output,
+                        reasoning: session.tokens.reasoning,
+                        cache: session.tokens.cache,
+                    } : undefined,
+                } as StatusEvent));
+            }
+        }
+
         // fetch todos and send to specific client
         const {data: todos} = await plugin.client.session.todo({
             path: { id: sessionId }
@@ -93,8 +137,18 @@ async function populateClient(ws: ServerWebSocket, plugin: PluginInput) {
         if (!messages) return;
 
         for (const message of messages) {
+            // Extract agent/model context from AssistantMessage wrapper
+            const msgInfo = message.info as any;
+            const messageContext = msgInfo?.role === 'assistant'
+                ? {
+                    agent: msgInfo.agent as string | undefined,
+                    modelID: msgInfo.modelID as string | undefined,
+                    providerID: msgInfo.providerID as string | undefined,
+                }
+                : undefined;
+
             for (const part of message.parts) {
-                const event = convertPartToEvent(part);
+                const event = await convertPartToEvent(part, messageContext, plugin);
                 if (event && ws.readyState === 1) {
                     ws.send(JSON.stringify(event));
                 }
@@ -106,7 +160,11 @@ async function populateClient(ws: ServerWebSocket, plugin: PluginInput) {
     }
 }
 
-function convertPartToEvent(part: Part): AgentEvent | MessageEvent | StatusEvent | ToolEvent | null {
+async function convertPartToEvent(
+    part: Part,
+    messageContext?: { agent?: string; modelID?: string; providerID?: string },
+    plugin?: PluginInput
+): Promise<AgentEvent | MessageEvent | StatusEvent | ToolEvent | null> {
     switch (part.type) {
         case 'text':
             return {
@@ -120,18 +178,33 @@ function convertPartToEvent(part: Part): AgentEvent | MessageEvent | StatusEvent
         case 'step-finish': {
             let tokens: number | undefined;
             let cost: number | undefined;
+            let tokenBreakdown: { total: number; input: number; output: number; reasoning: number; cache: { read: number; write: number } } | undefined;
             if (part.type === 'step-finish') {
-                // v1 StepFinishPart has {input, output, reasoning, cache} - compute total
-                tokens = part.tokens.input + part.tokens.output + part.tokens.reasoning;
+                const partTokens = (part as StepFinishPart).tokens;
+                const total = partTokens.total ?? partTokens.input + partTokens.output + partTokens.reasoning;
+                tokens = total;
                 cost = part.cost;
+                tokenBreakdown = {
+                    total,
+                    input: partTokens.input,
+                    output: partTokens.output,
+                    reasoning: partTokens.reasoning,
+                    cache: partTokens.cache,
+                };
             }
             return {
                 type: 'status',
                 sessionId: part.sessionID,
                 status: part.type,
-                tokens,
-                cost
-            };
+                cost,
+                tokens: tokenBreakdown ? {
+                    total: tokens ?? tokenBreakdown.total,
+                    input: tokenBreakdown.input,
+                    output: tokenBreakdown.output,
+                    reasoning: tokenBreakdown.reasoning,
+                    cache: tokenBreakdown.cache,
+                } : (tokens !== undefined ? { total: tokens, input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } : undefined),
+            } as StatusEvent;
         }
 
         case 'tool': {
@@ -161,17 +234,21 @@ function convertPartToEvent(part: Part): AgentEvent | MessageEvent | StatusEvent
             };
         }
 
-        case 'agent':
-            // AgentPart only has name, model/provider/prompt data not available
+        case 'agent': {
+            // Resolve session to get parentID for routing
+            const agentSession = plugin ? await findSession(part.sessionID, plugin) : undefined;
+            const role = agentSession?.parentID ? 'subagent' : 'primary';
             return {
                 type: 'agent',
                 sessionId: part.sessionID,
-                role: 'primary',
-                name: part.name,
-                model: '?',
-                provider: '?',
-                prompt: ''
-            };
+                role,
+                name: messageContext?.agent ?? part.name,
+                model: messageContext?.modelID ?? '?',
+                provider: messageContext?.providerID ?? '?',
+                prompt: '',
+                targetSessionId: agentSession?.parentID,
+            } as AgentEvent & { targetSessionId?: string };
+        }
 
         default:
             // subtask, file, snapshot, patch, retry, compaction — skip

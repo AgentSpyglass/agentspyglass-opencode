@@ -5,6 +5,8 @@ import {agentEventHandle, messageEventHandle, statusEventHandle, todoEventHandle
 import {stopBridge} from './server';
 import {stopWindow} from './window';
 import {clearSessions} from './service/session-storage.service';
+import {StepFinishPart} from "@opencode-ai/sdk/v2";
+import type {TokenBreakdown} from './model/definitions';
 
 let SESSION_ID: string | undefined;
 export const AgentSpyglass: Plugin = async (plugin: PluginInput) => {
@@ -25,9 +27,6 @@ export const AgentSpyglass: Plugin = async (plugin: PluginInput) => {
                 await agentEventHandle(
                     plugin,
                     input.sessionID,
-                    input.agent,
-                    input.model.modelID,
-                    input.model.providerID,
                     output.parts
                         .filter(part => part.type == 'text')
                         .map(part => part.text)
@@ -83,13 +82,22 @@ async function handlePartUpdated(plugin: PluginInput, part: Part) {
         case 'step-finish': {
             let cost: number | undefined;
             let tokens: number | undefined;
+            let tokenBreakdown: TokenBreakdown | undefined;
             if (part.type === 'step-finish') {
-                cost = part.cost;
-                // v1 StepFinishPart has {input, output, reasoning, cache} - compute total
-                tokens = part.tokens.input + part.tokens.output + part.tokens.reasoning;
+                const finishPart = part as StepFinishPart;
+                cost = finishPart.cost;
+                const total = finishPart.tokens.total ?? finishPart.tokens.input + finishPart.tokens.output + finishPart.tokens.reasoning;
+                tokens = total;
+                tokenBreakdown = {
+                    total,
+                    input: finishPart.tokens.input,
+                    output: finishPart.tokens.output,
+                    reasoning: finishPart.tokens.reasoning,
+                    cache: finishPart.tokens.cache,
+                };
             }
 
-            await statusEventHandle(plugin, part.sessionID, part.type, tokens, cost);
+            await statusEventHandle(plugin, part.sessionID, part.type, tokens, cost, tokenBreakdown);
             break;
         }
         case 'text':
