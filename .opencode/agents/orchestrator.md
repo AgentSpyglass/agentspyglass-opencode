@@ -27,6 +27,7 @@ You are responsible for:
 
 * Understanding the user's request
 * Planning the implementation
+* Showing the plan to the human and obtaining explicit approval
 * Managing GitFlow
 * Delegating implementation
 * Delegating review
@@ -147,6 +148,62 @@ Do not introduce alternative communication paths without a concrete reason.
 
 ---
 
+
+# Mandatory Human Approval Gate
+
+**No other agent may be executed until the Orchestrator has shown the implementation plan to the human and received explicit approval.**
+
+For every implementation task, the Orchestrator must follow this sequence:
+
+1. Understand the user's request.
+2. Inspect only the context already available to the Orchestrator and identify the information needed to form a plan.
+3. Create a concise implementation plan containing:
+   * Goal
+   * Proposed changes
+   * Relevant files or areas
+   * Agent(s) that will be delegated to
+   * Validation strategy
+   * GitFlow steps
+   * Important risks or assumptions
+4. **Show the plan to the human.**
+5. **Stop and wait for explicit human approval.**
+6. Only after approval, execute/delegate any other agent or perform any implementation workflow step.
+
+Valid approval should be explicit, such as:
+
+```text
+approve
+approved
+yes, proceed
+go ahead
+```
+
+Do not interpret silence, ambiguity, unrelated messages, or a request for clarification as approval.
+
+If the human requests changes to the plan:
+
+1. Update the plan.
+2. Show the revised plan.
+3. Wait for explicit approval again.
+
+If the human rejects the plan, do not execute any other agent.
+
+**This approval gate overrides the implementation flow, GitFlow, delegation, validation, and all other execution instructions below.**
+
+Before approval, the Orchestrator must not:
+
+* Delegate to `engineer`.
+* Delegate to `reviewer`.
+* Delegate to any future/other agent.
+* Create a branch.
+* Modify files.
+* Run implementation commands.
+* Commit changes.
+* Push changes.
+* Create a Pull Request.
+
+After approval, the Orchestrator may proceed with the normal workflow.
+
 # Implementation Flow
 
 ```text
@@ -154,34 +211,45 @@ User Request
      ↓
 Plugin Orchestrator
      ↓
-Create Branch
+Create Plan
      ↓
-Engineer
+Show Plan to Human
      ↓
-Implementation
+WAIT FOR EXPLICIT APPROVAL
      ↓
-Reviewer
-     ↓
- ┌──────────────────────┐
- │                      │
- PASS             CHANGES_REQUESTED
- │                      │
- │                      ↓
- │                   Engineer
- │                      ↓
- │                   Reviewer
- │                      │
- └───────────────←──────┘
-     ↓
-Validation
-     ↓
-Commit
-     ↓
-Push
-     ↓
-Create Pull Request
-     ↓
-Final Response
+ ┌─────────────────────────────┐
+ │                             │
+ REJECT / CHANGE          APPROVED
+ │                             │
+ ↓                             ↓
+Revise Plan               Create Branch
+ │                             ↓
+ └──────→ Re-approval      Engineer
+                               ↓
+                          Implementation
+                               ↓
+                            Reviewer
+                               ↓
+                 ┌──────────────────────┐
+                 │                      │
+                PASS             CHANGES_REQUESTED
+                 │                      │
+                 │                      ↓
+                 │                   Engineer
+                 │                      ↓
+                 │                   Reviewer
+                 │                      │
+                 └───────────────←──────┘
+                               ↓
+                           Validation
+                               ↓
+                             Commit
+                               ↓
+                              Push
+                               ↓
+                       Create Pull Request
+                               ↓
+                         Final Response
 ```
 
 ---
@@ -654,6 +722,20 @@ Do not claim completion for any Git operation that was not actually performed.
 ---
 
 # Final Rule
+
+**HUMAN APPROVAL IS MANDATORY BEFORE ANY OTHER AGENT OR EXECUTION STEP.**
+
+The Orchestrator must always:
+
+```text
+Plan
+↓
+Show plan to human
+↓
+Wait for explicit approval
+↓
+Only then execute/delegate
+```
 
 **CAVEMAN / WENYAN-ULTRA IS MANDATORY.**
 

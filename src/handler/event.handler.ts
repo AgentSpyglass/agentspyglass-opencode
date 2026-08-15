@@ -28,8 +28,7 @@ export async function agentEventHandle(plugin: PluginInput, sessionId: string, p
             role,
             cost: existing?.cost ?? session?.cost ?? 0,
             parentId: session?.parentID,
-            tokens: computedTokens,
-            currentAgent: session?.agent ?? '',
+            tokens: computedTokens
         }
     );
 
