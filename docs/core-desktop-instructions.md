@@ -1,31 +1,33 @@
-# Core & Desktop Integration Instructions
+# Desktop Integration Instructions
+
+> **Note:** Core types updated in PR #5. This document covers desktop consumer changes only.
 
 ## Context
 
-> ⚠️ This plugin sends new wire format. Core and desktop must update to consume. See Core Tasks and Desktop Tasks sections.
-
-The OpenCode plugin now sends **v2-enriched data** over the WebSocket wire. This document describes what changed and what core/desktop need to do to consume it.
+The OpenCode plugin now sends **v2-enriched data** over the WebSocket wire. This document describes what desktop needs to do to consume the new format.
 
 ---
 
-## Wire Changes (What Plugin Now Sends)
+## Wire Format Reference
 
-### 1. AgentEvent — Now Includes Cost, Tokens & Target Session
+### AgentEvent
 
-**Before:**
-```json
-{
-  "type": "agent",
-  "sessionId": "abc123",
-  "role": "primary",
-  "name": "coder",
-  "model": "claude-sonnet-4-20250514",
-  "provider": "anthropic",
-  "prompt": "fix the bug"
+```typescript
+interface AgentEvent {
+    type: 'agent';
+    sessionId: string;
+    role: 'primary' | 'subagent';
+    name: string;
+    model: string;
+    provider: string;
+    prompt: string;
+    cost?: number;              // session cost at agent creation time
+    tokens?: number;            // total tokens at agent creation time
+    targetSessionId?: string;   // parent session ID for subagents
 }
 ```
 
-**After:**
+**Example payload:**
 ```json
 {
   "type": "agent",
@@ -48,26 +50,27 @@ The OpenCode plugin now sends **v2-enriched data** over the WebSocket wire. This
 
 ---
 
-### 2. StatusEvent — Consolidated Tokens Object
+### StatusEvent
 
-**Before:**
-```json
-{
-  "type": "status",
-  "sessionId": "abc123",
-  "status": "step-finish",
-  "tokens": 1500,
-  "cost": 0.0045,
-  "tokenBreakdown": {
-    "input": 800,
-    "output": 400,
-    "reasoning": 300,
-    "cache": { "read": 200, "write": 100 }
-  }
+```typescript
+interface StatusEvent {
+    type: 'status';
+    sessionId: string;
+    status: 'step-start' | 'reasoning' | 'step-finish';
+    cost?: number;
+    tokens?: TokenBreakdown;    // consolidated token breakdown object
 }
+
+type TokenBreakdown = {
+    total: number;
+    input: number;
+    output: number;
+    reasoning: number;
+    cache: { read: number; write: number };
+};
 ```
 
-**After:**
+**Example payload:**
 ```json
 {
   "type": "status",
@@ -89,20 +92,9 @@ The OpenCode plugin now sends **v2-enriched data** over the WebSocket wire. This
 - `tokenBreakdown` field removed — merged into `tokens`
 - `tokens.total` contains the total token count
 
-**TokenBreakdown type:**
-```typescript
-type TokenBreakdown = {
-  total: number;
-  input: number;
-  output: number;
-  reasoning: number;
-  cache: { read: number; write: number };
-};
-```
-
 ---
 
-### 3. Initial Session State on Connect
+### Initial Session State on Connect
 
 When desktop connects via WebSocket, plugin now sends **initial state events** before message history:
 
@@ -115,24 +107,10 @@ This gives desktop immediate context without waiting for next step.
 
 ---
 
-### 4. Agent Routing Context
+### Agent Routing Context
 
 When replaying message history, `AgentPart` events now include real agent/model/provider from the parent `AssistantMessage`:
 
-**Before:**
-```json
-{
-  "type": "agent",
-  "sessionId": "abc123",
-  "role": "primary",
-  "name": "coder",
-  "model": "?",
-  "provider": "?",
-  "prompt": ""
-}
-```
-
-**After:**
 ```json
 {
   "type": "agent",
@@ -143,77 +121,6 @@ When replaying message history, `AgentPart` events now include real agent/model/
   "provider": "anthropic",
   "prompt": ""
 }
-```
-
----
-
-## Core Tasks (@agentspyglass/core)
-
-### Task 1: Update AgentEvent Interface
-
-**File:** `src/event.definitions.ts`
-
-```typescript
-export interface AgentEvent extends Event {
-    role: 'primary' | 'subagent';
-    name: string;
-    model: string;
-    provider: string;
-    prompt: string;
-    // NEW FIELDS
-    cost?: number;
-    tokens?: number;
-    targetSessionId?: string;
-}
-```
-
-### Task 2: Update StatusEvent Interface
-
-**File:** `src/event.definitions.ts`
-
-```typescript
-export interface StatusEvent extends Event {
-    status: 'step-start' | 'reasoning' | 'step-finish';
-    cost?: number;
-    // CHANGED: tokens is now TokenBreakdown object
-    tokens?: TokenBreakdown;
-}
-```
-
-### Task 3: Add TokenBreakdown Type
-
-**File:** `src/model.definitions.ts` (or `src/event.definitions.ts`)
-
-```typescript
-export type TokenBreakdown = {
-    total: number;
-    input: number;
-    output: number;
-    reasoning: number;
-    cache: { read: number; write: number };
-};
-```
-
-Export from `src/index.ts`.
-
-### Task 4: Update Agent Model Type
-
-**File:** `src/model.definitions.ts`
-
-```typescript
-export type Agent = {
-    sessionId: string;
-    role: 'primary' | 'subagent';
-    name: string;
-    prompt: string;
-    model: string;
-    provider: string;
-    brand: Brand;
-    status?: 'reasoning' | 'completed';
-    // NEW FIELDS
-    cost?: number;
-    tokens?: number;
-};
 ```
 
 ---
@@ -399,45 +306,6 @@ Desktop should handle missing fields gracefully (show 0 or hide UI element).
 match &event.tokens {
     TokensEnum::Number(n) => { /* old format */ },
     TokensEnum::Object(breakdown) => { /* new format with total, input, output, etc. */ },
-}
-```
-
----
-
-## Wire Format Reference
-
-### AgentEvent (full)
-
-```typescript
-interface AgentEvent {
-    type: 'agent';
-    sessionId: string;
-    role: 'primary' | 'subagent';
-    name: string;
-    model: string;
-    provider: string;
-    prompt: string;
-    cost?: number;
-    tokens?: number;
-    targetSessionId?: string;  // NEW: parent session for subagents
-}
-```
-
-### StatusEvent (full)
-
-```typescript
-interface StatusEvent {
-    type: 'status';
-    sessionId: string;
-    status: 'step-start' | 'reasoning' | 'step-finish';
-    cost?: number;
-    tokens?: {                 // CHANGED: was flat number, now object
-        total: number;
-        input: number;
-        output: number;
-        reasoning: number;
-        cache: { read: number; write: number };
-    };
 }
 ```
 
