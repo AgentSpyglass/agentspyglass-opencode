@@ -6,6 +6,7 @@ import {stopBridge} from './server';
 import {stopWindow} from './window';
 import {clearSessions} from './service/session-storage.service';
 import {StepFinishPart} from "@opencode-ai/sdk/v2";
+import type {TokenBreakdown} from './model/definitions';
 
 let SESSION_ID: string | undefined;
 export const AgentSpyglass: Plugin = async (plugin: PluginInput) => {
@@ -81,12 +82,14 @@ async function handlePartUpdated(plugin: PluginInput, part: Part) {
         case 'step-finish': {
             let cost: number | undefined;
             let tokens: number | undefined;
-            let tokenBreakdown: { input: number; output: number; reasoning: number; cache: { read: number; write: number } } | undefined;
+            let tokenBreakdown: TokenBreakdown | undefined;
             if (part.type === 'step-finish') {
                 const finishPart = part as StepFinishPart;
                 cost = finishPart.cost;
-                tokens = finishPart.tokens.total;
+                const total = finishPart.tokens.total ?? finishPart.tokens.input + finishPart.tokens.output + finishPart.tokens.reasoning;
+                tokens = total;
                 tokenBreakdown = {
+                    total,
                     input: finishPart.tokens.input,
                     output: finishPart.tokens.output,
                     reasoning: finishPart.tokens.reasoning,

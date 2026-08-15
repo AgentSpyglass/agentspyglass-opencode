@@ -2,13 +2,15 @@
 
 ## Context
 
+> ⚠️ This plugin sends new wire format. Core and desktop must update to consume. See Core Tasks and Desktop Tasks sections.
+
 The OpenCode plugin now sends **v2-enriched data** over the WebSocket wire. This document describes what changed and what core/desktop need to do to consume it.
 
 ---
 
 ## Wire Changes (What Plugin Now Sends)
 
-### 1. AgentEvent — Now Includes Cost & Tokens
+### 1. AgentEvent — Now Includes Cost, Tokens & Target Session
 
 **Before:**
 ```json
@@ -34,30 +36,21 @@ The OpenCode plugin now sends **v2-enriched data** over the WebSocket wire. This
   "provider": "anthropic",
   "prompt": "fix the bug",
   "cost": 0.0045,
-  "tokens": 1500
+  "tokens": 1500,
+  "targetSessionId": "parent-session-id"
 }
 ```
 
 **New fields:**
 - `cost?: number` — session cost at agent creation time (from v2 Session.cost)
 - `tokens?: number` — total tokens at agent creation time (sum of input+output+reasoning)
+- `targetSessionId?: string` — parent session ID for subagents (undefined for primary)
 
 ---
 
-### 2. StatusEvent — Now Includes Token Breakdown
+### 2. StatusEvent — Consolidated Tokens Object
 
 **Before:**
-```json
-{
-  "type": "status",
-  "sessionId": "abc123",
-  "status": "step-finish",
-  "tokens": 1500,
-  "cost": 0.0045
-}
-```
-
-**After:**
 ```json
 {
   "type": "status",
@@ -74,12 +67,32 @@ The OpenCode plugin now sends **v2-enriched data** over the WebSocket wire. This
 }
 ```
 
-**New field:**
-- `tokenBreakdown?: TokenBreakdown` — full token breakdown per step
+**After:**
+```json
+{
+  "type": "status",
+  "sessionId": "abc123",
+  "status": "step-finish",
+  "cost": 0.0045,
+  "tokens": {
+    "total": 1500,
+    "input": 800,
+    "output": 400,
+    "reasoning": 300,
+    "cache": { "read": 200, "write": 100 }
+  }
+}
+```
+
+**Changes:**
+- `tokens` is now a `TokenBreakdown` object (was flat `number`)
+- `tokenBreakdown` field removed — merged into `tokens`
+- `tokens.total` contains the total token count
 
 **TokenBreakdown type:**
 ```typescript
 type TokenBreakdown = {
+  total: number;
   input: number;
   output: number;
   reasoning: number;
@@ -95,6 +108,8 @@ When desktop connects via WebSocket, plugin now sends **initial state events** b
 
 1. **AgentEvent** — with real agent/model/provider from v2 Session (no more `'?'`)
 2. **StatusEvent** — with session-level cost and token totals
+3. **TodoEvent** — current todos
+4. Message history events
 
 This gives desktop immediate context without waiting for next step.
 
@@ -148,6 +163,7 @@ export interface AgentEvent extends Event {
     // NEW FIELDS
     cost?: number;
     tokens?: number;
+    targetSessionId?: string;
 }
 ```
 
@@ -158,10 +174,9 @@ export interface AgentEvent extends Event {
 ```typescript
 export interface StatusEvent extends Event {
     status: 'step-start' | 'reasoning' | 'step-finish';
-    tokens?: number;
     cost?: number;
-    // NEW FIELD
-    tokenBreakdown?: TokenBreakdown;
+    // CHANGED: tokens is now TokenBreakdown object
+    tokens?: TokenBreakdown;
 }
 ```
 
@@ -171,6 +186,7 @@ export interface StatusEvent extends Event {
 
 ```typescript
 export type TokenBreakdown = {
+    total: number;
     input: number;
     output: number;
     reasoning: number;
@@ -191,7 +207,7 @@ export type Agent = {
     name: string;
     prompt: string;
     model: string;
-    provider: string;  // NEW — was missing
+    provider: string;
     brand: Brand;
     status?: 'reasoning' | 'completed';
     // NEW FIELDS
@@ -210,6 +226,7 @@ When receiving `AgentEvent`:
 - Extract `cost` and `tokens` fields
 - Display in agent card/UI
 - Accumulate if multiple agents in same session
+- Use `targetSessionId` for subagent routing visualization
 
 **Example (Rust/Tauri):**
 ```rust
@@ -225,30 +242,34 @@ struct AgentEvent {
     prompt: String,
     cost: Option<f64>,
     tokens: Option<u64>,
+    target_session_id: Option<String>,
 }
 
 fn handle_agent_event(event: AgentEvent) {
     if let Some(cost) = event.cost {
-        // Update agent card with cost
         update_agent_cost(&event.session_id, &event.name, cost);
     }
     if let Some(tokens) = event.tokens {
-        // Update agent card with token count
         update_agent_tokens(&event.session_id, &event.name, tokens);
+    }
+    if let Some(parent_id) = &event.target_session_id {
+        // Subagent: draw arrow from parent to this agent
+        draw_agent_routing(parent_id, &event.session_id);
     }
 }
 ```
 
 ### Task 2: Display Token Breakdown
 
-When receiving `StatusEvent` with `tokenBreakdown`:
-- Show detailed breakdown in UI (input/output/reasoning/cache)
+When receiving `StatusEvent` with `tokens`:
+- Show detailed breakdown in UI (input/output/reasoning/cache/total)
 - Accumulate per session or per agent
 
 **Example (Rust/Tauri):**
 ```rust
 #[derive(Deserialize)]
 struct TokenBreakdown {
+    total: u64,
     input: u64,
     output: u64,
     reasoning: u64,
@@ -267,21 +288,20 @@ struct StatusEvent {
     event_type: String,
     session_id: String,
     status: String,
-    tokens: Option<u64>,
     cost: Option<f64>,
-    token_breakdown: Option<TokenBreakdown>,
+    tokens: Option<TokenBreakdown>,
 }
 
 fn handle_status_event(event: StatusEvent) {
-    if let Some(breakdown) = event.token_breakdown {
-        // Show detailed breakdown
+    if let Some(tokens) = &event.tokens {
         show_token_breakdown(
             &event.session_id,
-            breakdown.input,
-            breakdown.output,
-            breakdown.reasoning,
-            breakdown.cache.read,
-            breakdown.cache.write,
+            tokens.total,
+            tokens.input,
+            tokens.output,
+            tokens.reasoning,
+            tokens.cache.read,
+            tokens.cache.write,
         );
     }
 }
@@ -302,17 +322,20 @@ On WebSocket connect, desktop receives:
 
 ### Task 4: Agent Routing Visualization
 
-With real agent/model/provider in `AgentPart` events:
+With real agent/model/provider in `AgentPart` events and `targetSessionId`:
 - Desktop can now show which agent produced each message
 - Draw arrows: Agent A → Agent B (when subtask spawned)
 - Label messages with agent name
+- Use `targetSessionId` to link subagents to their parent
 
 **Example:**
 ```rust
-// When receiving AgentEvent with real model/provider
 if event.model != "?" && event.provider != "?" {
-    // Show agent badge with model info
     show_agent_badge(&event.name, &event.model, &event.provider);
+}
+if let Some(parent_id) = &event.target_session_id {
+    // This is a subagent - draw routing arrow
+    draw_subagent_arrow(parent_id, &event.session_id, &event.name);
 }
 ```
 
@@ -336,8 +359,8 @@ fn update_session_stats(stats: &mut SessionStats, event: &StatusEvent) {
     if let Some(cost) = event.cost {
         stats.total_cost += cost;
     }
-    if let Some(tokens) = event.tokens {
-        stats.total_tokens += tokens;
+    if let Some(tokens) = &event.tokens {
+        stats.total_tokens += tokens.total;
     }
 }
 ```
@@ -348,14 +371,14 @@ fn update_session_stats(stats: &mut SessionStats, event: &StatusEvent) {
 
 After implementing core/desktop changes:
 
-- [ ] Desktop receives `AgentEvent` with `cost` and `tokens` fields
-- [ ] Desktop receives `StatusEvent` with `tokenBreakdown` field
+- [ ] Desktop receives `AgentEvent` with `cost`, `tokens`, and `targetSessionId` fields
+- [ ] Desktop receives `StatusEvent` with `tokens` as TokenBreakdown object
 - [ ] Initial session state shows correct cost/totals on connect
 - [ ] Agent cards display real model/provider (not `'?'`)
-- [ ] Token breakdown UI shows input/output/reasoning/cache
+- [ ] Token breakdown UI shows input/output/reasoning/cache/total
 - [ ] Session-level cost accumulates correctly
 - [ ] Per-agent cost accumulates correctly
-- [ ] Routing visualization works (agent A → agent B)
+- [ ] Routing visualization works (agent A → agent B via `targetSessionId`)
 
 ---
 
@@ -366,9 +389,18 @@ All new fields are **optional** (`?` in TypeScript, `Option<T>` in Rust).
 If desktop receives old events without these fields:
 - `cost` → `None` / `undefined`
 - `tokens` → `None` / `undefined`
-- `tokenBreakdown` → `None` / `undefined`
+- `targetSessionId` → `None` / `undefined`
 
 Desktop should handle missing fields gracefully (show 0 or hide UI element).
+
+**Important:** The `tokens` field changed from `number` to `TokenBreakdown` object. Desktop must handle both formats during transition:
+```rust
+// Handle old format (number) and new format (TokenBreakdown)
+match &event.tokens {
+    TokensEnum::Number(n) => { /* old format */ },
+    TokensEnum::Object(breakdown) => { /* new format with total, input, output, etc. */ },
+}
+```
 
 ---
 
@@ -385,8 +417,9 @@ interface AgentEvent {
     model: string;
     provider: string;
     prompt: string;
-    cost?: number;           // NEW
-    tokens?: number;         // NEW
+    cost?: number;
+    tokens?: number;
+    targetSessionId?: string;  // NEW: parent session for subagents
 }
 ```
 
@@ -397,9 +430,9 @@ interface StatusEvent {
     type: 'status';
     sessionId: string;
     status: 'step-start' | 'reasoning' | 'step-finish';
-    tokens?: number;
     cost?: number;
-    tokenBreakdown?: {       // NEW
+    tokens?: {                 // CHANGED: was flat number, now object
+        total: number;
         input: number;
         output: number;
         reasoning: number;

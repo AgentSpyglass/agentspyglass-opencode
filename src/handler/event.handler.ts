@@ -11,46 +11,40 @@ export async function agentEventHandle(plugin: PluginInput, sessionId: string, p
     const role = session?.parentID? 'subagent' : 'primary'
     const existing = getSession(sessionId);
 
+    const computedTokens: TokenBreakdown | undefined = existing?.tokens ?? (session?.tokens ? {
+        total: session.tokens.input + session.tokens.output + session.tokens.reasoning,
+        input: session.tokens.input,
+        output: session.tokens.output,
+        reasoning: session.tokens.reasoning,
+        cache: session.tokens.cache,
+    } : undefined);
+
     saveSession(
         {
             id: sessionId,
-            agent: session.agent ?? '',
-            model: session.model?.id ?? '',
-            provider: session.model?.providerID ?? '',
+            agent: session?.agent ?? '',
+            model: session?.model?.id ?? '',
+            provider: session?.model?.providerID ?? '',
             role,
-            cost: existing?.cost ?? session.cost ?? 0,
-            total: existing?.total ?? (session.tokens
-                ? session.tokens.input + session.tokens.output + session.tokens.reasoning
-                : 0),
+            cost: existing?.cost ?? session?.cost ?? 0,
             parentId: session?.parentID,
-            tokens: existing?.tokens ?? (session.tokens ? {
-                input: session.tokens.input,
-                output: session.tokens.output,
-                reasoning: session.tokens.reasoning,
-                cache: session.tokens.cache,
-            } : undefined),
-            modelRef: existing?.modelRef ?? (session.model ? {
-                id: session.model.id,
-                providerID: session.model.providerID,
-                variant: session.model.variant,
-            } : undefined),
-            currentAgent: session.agent ?? '',
+            tokens: computedTokens,
+            currentAgent: session?.agent ?? '',
         }
     );
 
     broadcastEvent({
         type: 'agent',
         sessionId,
-        name: session.agent ?? '',
-        model: session.model?.id ?? '',
-        provider: session.model?.providerID ?? '',
+        name: session?.agent ?? '',
+        model: session?.model?.id ?? '',
+        provider: session?.model?.providerID ?? '',
         prompt,
         role,
-        cost: session.cost ?? 0,
-        tokens: session.tokens?.input
-            ? session.tokens.input + session.tokens.output + session.tokens.reasoning
-            : 0,
-    } as AgentEvent);
+        cost: session?.cost ?? 0,
+        tokens: computedTokens?.total ?? 0,
+        targetSessionId: session?.parentID,
+    } as AgentEvent & { targetSessionId?: string });
 }
 
 export async function toolEventHandle(plugin: PluginInput, sessionId: string, callId: string, name: string, status: 'running' | 'completed', input?: any) {
@@ -81,16 +75,21 @@ export async function statusEventHandle(
         const sessionHold = getSession(sessionId);
         if (sessionHold) {
             if (cost !== undefined) sessionHold.cost += cost;
-            if (tokens !== undefined) sessionHold.total += tokens;
             if (tokenBreakdown) {
                 if (!sessionHold.tokens) {
-                    sessionHold.tokens = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } };
+                    sessionHold.tokens = { total: 0, input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } };
                 }
+                sessionHold.tokens.total += tokenBreakdown.total;
                 sessionHold.tokens.input += tokenBreakdown.input;
                 sessionHold.tokens.output += tokenBreakdown.output;
                 sessionHold.tokens.reasoning += tokenBreakdown.reasoning;
                 sessionHold.tokens.cache.read += tokenBreakdown.cache.read;
                 sessionHold.tokens.cache.write += tokenBreakdown.cache.write;
+            } else if (tokens !== undefined) {
+                if (!sessionHold.tokens) {
+                    sessionHold.tokens = { total: 0, input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } };
+                }
+                sessionHold.tokens.total += tokens;
             }
             saveSession(sessionHold);
         }
@@ -100,9 +99,14 @@ export async function statusEventHandle(
         type: 'status',
         sessionId,
         status,
-        tokens,
         cost,
-        tokenBreakdown,
+        tokens: tokenBreakdown ? {
+            total: tokens ?? tokenBreakdown.total,
+            input: tokenBreakdown.input,
+            output: tokenBreakdown.output,
+            reasoning: tokenBreakdown.reasoning,
+            cache: tokenBreakdown.cache,
+        } : (tokens !== undefined ? { total: tokens, input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } : undefined),
     } as StatusEvent);
 }
 

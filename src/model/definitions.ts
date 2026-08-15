@@ -1,4 +1,5 @@
 export type TokenBreakdown = {
+    total: number;
     input: number;
     output: number;
     reasoning: number;
@@ -10,15 +11,9 @@ export type SessionHold = {
     agent: string;
     model: string;
     provider: string;
-    total: number;
     cost: number;
     parentId?: string;
     role: 'primary' | 'subagent' | string;
     tokens?: TokenBreakdown;
-    modelRef?: {
-        id: string;
-        providerID: string;
-        variant?: string;
-    };
     currentAgent?: string;
 }
