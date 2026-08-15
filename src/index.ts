@@ -81,12 +81,20 @@ async function handlePartUpdated(plugin: PluginInput, part: Part) {
         case 'step-finish': {
             let cost: number | undefined;
             let tokens: number | undefined;
+            let tokenBreakdown: { input: number; output: number; reasoning: number; cache: { read: number; write: number } } | undefined;
             if (part.type === 'step-finish') {
-                cost = part.cost;
-                tokens = (part as StepFinishPart).tokens.total;
+                const finishPart = part as StepFinishPart;
+                cost = finishPart.cost;
+                tokens = finishPart.tokens.total;
+                tokenBreakdown = {
+                    input: finishPart.tokens.input,
+                    output: finishPart.tokens.output,
+                    reasoning: finishPart.tokens.reasoning,
+                    cache: finishPart.tokens.cache,
+                };
             }
 
-            await statusEventHandle(plugin, part.sessionID, part.type, tokens, cost);
+            await statusEventHandle(plugin, part.sessionID, part.type, tokens, cost, tokenBreakdown);
             break;
         }
         case 'text':

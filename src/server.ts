@@ -2,6 +2,9 @@ import type {Server, ServerWebSocket} from "bun"
 import {Event, AgentEvent, MessageEvent, StatusEvent, ToolEvent, TodoEvent} from "@agentspyglass/core"
 import type {Part} from "@opencode-ai/sdk"
 import { PluginInput } from "@opencode-ai/plugin"
+import {StepFinishPart} from "@opencode-ai/sdk/v2";
+import type {Session, AssistantMessage} from "@opencode-ai/sdk/v2/types";
+import { findSession } from "./util/opencode.util";
 
 const PORT = Number(process.env.AGENTSPYGLASS_PORT ?? 51763)
 const HOST = "127.0.0.1"
@@ -70,6 +73,51 @@ async function populateClient(ws: ServerWebSocket, plugin: PluginInput) {
     if (!sessionId) return;
 
     try {
+        // Fetch session with v2-enriched data (cost, tokens, agent, model)
+        const session = await findSession(sessionId, plugin);
+
+        // Send initial AgentEvent with real agent/model/provider from v2 Session
+        if (session.agent || session.model) {
+            const totalTokens = session.tokens
+                ? session.tokens.input + session.tokens.output + session.tokens.reasoning
+                : 0;
+            if (ws.readyState === 1) {
+                ws.send(JSON.stringify({
+                    type: 'agent',
+                    sessionId,
+                    name: session.agent ?? '',
+                    model: session.model?.id ?? '',
+                    provider: session.model?.providerID ?? '',
+                    prompt: '',
+                    role: session.parentID ? 'subagent' : 'primary',
+                    cost: session.cost ?? 0,
+                    tokens: totalTokens,
+                } as AgentEvent));
+            }
+        }
+
+        // Send initial StatusEvent with session-level cost and token totals
+        if ((session.cost !== undefined && session.cost > 0) || session.tokens) {
+            const totalTokens = session.tokens
+                ? session.tokens.input + session.tokens.output + session.tokens.reasoning
+                : undefined;
+            if (ws.readyState === 1) {
+                ws.send(JSON.stringify({
+                    type: 'status',
+                    sessionId,
+                    status: 'step-finish' as const,
+                    tokens: totalTokens,
+                    cost: session.cost,
+                    tokenBreakdown: session.tokens ? {
+                        input: session.tokens.input,
+                        output: session.tokens.output,
+                        reasoning: session.tokens.reasoning,
+                        cache: session.tokens.cache,
+                    } : undefined,
+                } as StatusEvent));
+            }
+        }
+
         // fetch todos and send to specific client
         const {data: todos} = await plugin.client.session.todo({
             path: { id: sessionId }
@@ -93,8 +141,18 @@ async function populateClient(ws: ServerWebSocket, plugin: PluginInput) {
         if (!messages) return;
 
         for (const message of messages) {
+            // Extract agent/model context from AssistantMessage wrapper
+            const msgInfo = message.info as any;
+            const messageContext = msgInfo?.role === 'assistant'
+                ? {
+                    agent: msgInfo.agent as string | undefined,
+                    modelID: msgInfo.modelID as string | undefined,
+                    providerID: msgInfo.providerID as string | undefined,
+                }
+                : undefined;
+
             for (const part of message.parts) {
-                const event = convertPartToEvent(part);
+                const event = convertPartToEvent(part, messageContext);
                 if (event && ws.readyState === 1) {
                     ws.send(JSON.stringify(event));
                 }
@@ -106,7 +164,10 @@ async function populateClient(ws: ServerWebSocket, plugin: PluginInput) {
     }
 }
 
-function convertPartToEvent(part: Part): AgentEvent | MessageEvent | StatusEvent | ToolEvent | null {
+function convertPartToEvent(
+    part: Part,
+    messageContext?: { agent?: string; modelID?: string; providerID?: string }
+): AgentEvent | MessageEvent | StatusEvent | ToolEvent | null {
     switch (part.type) {
         case 'text':
             return {
@@ -120,18 +181,25 @@ function convertPartToEvent(part: Part): AgentEvent | MessageEvent | StatusEvent
         case 'step-finish': {
             let tokens: number | undefined;
             let cost: number | undefined;
+            let tokenBreakdown: { input: number; output: number; reasoning: number; cache: { read: number; write: number } } | undefined;
             if (part.type === 'step-finish') {
-                // v1 StepFinishPart has {input, output, reasoning, cache} - compute total
-                tokens = part.tokens.input + part.tokens.output + part.tokens.reasoning;
+                tokens = (part as StepFinishPart).tokens.total;
                 cost = part.cost;
+                tokenBreakdown = {
+                    input: (part as StepFinishPart).tokens.input,
+                    output: (part as StepFinishPart).tokens.output,
+                    reasoning: (part as StepFinishPart).tokens.reasoning,
+                    cache: (part as StepFinishPart).tokens.cache,
+                };
             }
             return {
                 type: 'status',
                 sessionId: part.sessionID,
                 status: part.type,
                 tokens,
-                cost
-            };
+                cost,
+                tokenBreakdown,
+            } as StatusEvent;
         }
 
         case 'tool': {
@@ -162,14 +230,14 @@ function convertPartToEvent(part: Part): AgentEvent | MessageEvent | StatusEvent
         }
 
         case 'agent':
-            // AgentPart only has name, model/provider/prompt data not available
+            // Use parent message's agent/model if available, else fallback
             return {
                 type: 'agent',
                 sessionId: part.sessionID,
                 role: 'primary',
-                name: part.name,
-                model: '?',
-                provider: '?',
+                name: messageContext?.agent ?? part.name,
+                model: messageContext?.modelID ?? '?',
+                provider: messageContext?.providerID ?? '?',
                 prompt: ''
             };
 
