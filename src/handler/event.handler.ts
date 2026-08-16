@@ -65,6 +65,7 @@ export async function statusEventHandle(
     status: 'step-start' | 'reasoning' | 'step-finish',
     tokens?: number,
     cost?: number,
+    contextUsed?: number,
     tokenBreakdown?: TokenBreakdown
 ) {
     await verifySession(plugin, sessionId);
@@ -99,6 +100,7 @@ export async function statusEventHandle(
         sessionId,
         status,
         cost,
+        contextUsed,
         tokens: tokenBreakdown ? {
             total: tokens ?? tokenBreakdown.total,
             input: tokenBreakdown.input,
