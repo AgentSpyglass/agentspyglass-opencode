@@ -4,7 +4,8 @@ import type {Part} from "@opencode-ai/sdk"
 import { PluginInput } from "@opencode-ai/plugin"
 import {StepFinishPart} from "@opencode-ai/sdk/v2";
 import type {Session, AssistantMessage} from "@opencode-ai/sdk/v2/types";
-import { findSession } from "./util/opencode.util";
+import {calculateContext, findSession} from "./util/opencode.util";
+import type { TokenBreakdown } from "./model/definitions";
 
 const PORT = Number(process.env.AGENTSPYGLASS_PORT ?? 51763)
 const HOST = "127.0.0.1"
@@ -148,7 +149,7 @@ async function populateClient(ws: ServerWebSocket, plugin: PluginInput) {
                 : undefined;
 
             for (const part of message.parts) {
-                const event = await convertPartToEvent(part, messageContext, plugin);
+                const event = await convertPartToEvent(part, plugin, messageContext);
                 if (event && ws.readyState === 1) {
                     ws.send(JSON.stringify(event));
                 }
@@ -162,8 +163,8 @@ async function populateClient(ws: ServerWebSocket, plugin: PluginInput) {
 
 async function convertPartToEvent(
     part: Part,
-    messageContext?: { agent?: string; modelID?: string; providerID?: string },
-    plugin?: PluginInput
+    plugin: PluginInput,
+    messageContext?: { agent?: string; modelID?: string; providerID?: string }
 ): Promise<AgentEvent | MessageEvent | StatusEvent | ToolEvent | null> {
     switch (part.type) {
         case 'text':
@@ -178,7 +179,8 @@ async function convertPartToEvent(
         case 'step-finish': {
             let tokens: number | undefined;
             let cost: number | undefined;
-            let tokenBreakdown: { total: number; input: number; output: number; reasoning: number; cache: { read: number; write: number } } | undefined;
+            let contextUsed: number | undefined;
+            let tokenBreakdown: TokenBreakdown | undefined;
             if (part.type === 'step-finish') {
                 const partTokens = (part as StepFinishPart).tokens;
                 const total = partTokens.total ?? partTokens.input + partTokens.output + partTokens.reasoning;
@@ -186,17 +188,19 @@ async function convertPartToEvent(
                 cost = part.cost;
                 tokenBreakdown = {
                     total,
+                    cache: partTokens.cache,
                     input: partTokens.input,
                     output: partTokens.output,
                     reasoning: partTokens.reasoning,
-                    cache: partTokens.cache,
                 };
+                contextUsed = await calculateContext(part.sessionID, tokens, plugin);
             }
             return {
                 type: 'status',
                 sessionId: part.sessionID,
                 status: part.type,
                 cost,
+                contextUsed,
                 tokens: tokenBreakdown ? {
                     total: tokens ?? tokenBreakdown.total,
                     input: tokenBreakdown.input,
