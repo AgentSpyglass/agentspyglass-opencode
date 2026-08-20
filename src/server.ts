@@ -68,96 +68,121 @@ export function stopBridge() {
     server = undefined;
 }
 
+async function populateSession(ws: ServerWebSocket, plugin: PluginInput, sessionId: string) {
+    // Fetch session with v2-enriched data (cost, tokens, agent, model)
+    const session = await findSession(sessionId, plugin);
+
+    // Send initial AgentEvent with real agent/model/provider from v2 Session
+    if (session.agent || session.model) {
+        const totalTokens = session.tokens ? session.tokens.input + session.tokens.output + session.tokens.reasoning : 0;
+        if (ws.readyState === 1) {
+            ws.send(JSON.stringify({
+                type: 'agent',
+                sessionId,
+                name: session.agent ?? '',
+                model: session.model?.id ?? '',
+                provider: session.model?.providerID ?? '',
+                prompt: '',
+                role: session.parentID ? 'subagent' : 'primary',
+                cost: session.cost ?? 0,
+                tokens: totalTokens,
+                targetSessionId: session.parentID,
+            } as AgentEvent & { targetSessionId?: string }));
+        }
+    }
+
+    // Send initial StatusEvent with session-level cost and token totals
+    if ((session.cost !== undefined && session.cost > 0) || session.tokens) {
+        if (ws.readyState === 1) {
+            ws.send(JSON.stringify({
+                type: 'status',
+                sessionId,
+                status: 'step-finish' as const,
+                cost: session.cost,
+                tokens: session.tokens ? {
+                    total: session.tokens.input + session.tokens.output + session.tokens.reasoning,
+                    input: session.tokens.input,
+                    output: session.tokens.output,
+                    reasoning: session.tokens.reasoning,
+                    cache: session.tokens.cache,
+                } : undefined,
+            } as StatusEvent));
+        }
+    }
+
+    // fetch todos and send to specific client
+    const {data: todos} = await plugin.client.session.todo({
+        path: { id: sessionId }
+    });
+    if (todos && ws.readyState === 1) {
+        ws.send(JSON.stringify({
+            type: 'todo',
+            sessionId,
+            todos: todos.map(t => ({
+                content: t.content,
+                priority: t.priority as 'high' | 'medium' | 'low',
+                status: t.status as 'pending' | 'in_progress' | 'completed' | 'cancelled'
+            }))
+        } satisfies TodoEvent));
+    }
+
+    // fetch all messages, convert parts, send to specific client
+    const {data: messages} = await plugin.client.session.messages({
+        path: { id: sessionId }
+    });
+    if (!messages) return;
+
+    for (const message of messages) {
+        // Extract agent/model context from AssistantMessage wrapper
+        const msgInfo = message.info as any;
+        const messageContext = msgInfo?.role === 'assistant'
+            ? {
+                agent: msgInfo.agent as string | undefined,
+                modelID: msgInfo.modelID as string | undefined,
+                providerID: msgInfo.providerID as string | undefined,
+            }
+            : undefined;
+
+        for (const part of message.parts) {
+            const event = await convertPartToEvent(part, plugin, messageContext);
+            if (event && ws.readyState === 1) {
+                ws.send(JSON.stringify(event));
+            }
+        }
+    }
+}
+
 // TODO: send todo event to specific ws, not broadcast
 async function populateClient(ws: ServerWebSocket, plugin: PluginInput) {
     const sessionId = currentSessionId;
     if (!sessionId) return;
 
     try {
-        // Fetch session with v2-enriched data (cost, tokens, agent, model)
-        const session = await findSession(sessionId, plugin);
+        // Populate primary session
+        await populateSession(ws, plugin, sessionId);
+    } catch (error) {
+        clients.delete(ws);
+        throw error;
+    }
 
-        // Send initial AgentEvent with real agent/model/provider from v2 Session
-        if (session.agent || session.model) {
-            const totalTokens = session.tokens ? session.tokens.input + session.tokens.output + session.tokens.reasoning : 0;
-            if (ws.readyState === 1) {
-                ws.send(JSON.stringify({
-                    type: 'agent',
-                    sessionId,
-                    name: session.agent ?? '',
-                    model: session.model?.id ?? '',
-                    provider: session.model?.providerID ?? '',
-                    prompt: '',
-                    role: session.parentID ? 'subagent' : 'primary',
-                    cost: session.cost ?? 0,
-                    tokens: totalTokens,
-                    targetSessionId: session.parentID,
-                } as AgentEvent & { targetSessionId?: string }));
-            }
-        }
-
-        // Send initial StatusEvent with session-level cost and token totals
-        if ((session.cost !== undefined && session.cost > 0) || session.tokens) {
-            if (ws.readyState === 1) {
-                ws.send(JSON.stringify({
-                    type: 'status',
-                    sessionId,
-                    status: 'step-finish' as const,
-                    cost: session.cost,
-                    tokens: session.tokens ? {
-                        total: session.tokens.input + session.tokens.output + session.tokens.reasoning,
-                        input: session.tokens.input,
-                        output: session.tokens.output,
-                        reasoning: session.tokens.reasoning,
-                        cache: session.tokens.cache,
-                    } : undefined,
-                } as StatusEvent));
-            }
-        }
-
-        // fetch todos and send to specific client
-        const {data: todos} = await plugin.client.session.todo({
+    // Fetch and populate child sessions (isolated — failures don't break primary)
+    try {
+        const { data: children } = await plugin.client.session.children({
             path: { id: sessionId }
         });
-        if (todos && ws.readyState === 1) {
-            ws.send(JSON.stringify({
-                type: 'todo',
-                sessionId,
-                todos: todos.map(t => ({
-                    content: t.content,
-                    priority: t.priority as 'high' | 'medium' | 'low',
-                    status: t.status as 'pending' | 'in_progress' | 'completed' | 'cancelled'
-                }))
-            } satisfies TodoEvent));
-        }
 
-        // fetch all messages, convert parts, send to specific client
-        const {data: messages} = await plugin.client.session.messages({
-            path: { id: sessionId }
-        });
-        if (!messages) return;
-
-        for (const message of messages) {
-            // Extract agent/model context from AssistantMessage wrapper
-            const msgInfo = message.info as any;
-            const messageContext = msgInfo?.role === 'assistant'
-                ? {
-                    agent: msgInfo.agent as string | undefined,
-                    modelID: msgInfo.modelID as string | undefined,
-                    providerID: msgInfo.providerID as string | undefined,
-                }
-                : undefined;
-
-            for (const part of message.parts) {
-                const event = await convertPartToEvent(part, plugin, messageContext);
-                if (event && ws.readyState === 1) {
-                    ws.send(JSON.stringify(event));
+        if (children) {
+            for (const child of children) {
+                try {
+                    await populateSession(ws, plugin, child.id);
+                } catch (error) {
+                    // Log but don't abort other children or break client connection
+                    console.error(`Failed to populate child session ${child.id}:`, error);
                 }
             }
         }
     } catch (error) {
-        clients.delete(ws);
-        throw error;
+        console.error(`Failed to fetch child sessions:`, error);
     }
 }
 
@@ -223,7 +248,6 @@ async function convertPartToEvent(
                 status = 'completed';
                 input = state.input;
             } else if (state.status === 'error') {
-                // ToolEvent only has running|completed, map error to completed with error info
                 status = 'completed';
                 input = { ...state.input, _error: state.error };
             }
@@ -239,7 +263,6 @@ async function convertPartToEvent(
         }
 
         case 'agent': {
-            // Resolve session to get parentID for routing
             const agentSession = plugin ? await findSession(part.sessionID, plugin) : undefined;
             const role = agentSession?.parentID ? 'subagent' : 'primary';
             return {
@@ -255,7 +278,6 @@ async function convertPartToEvent(
         }
 
         default:
-            // subtask, file, snapshot, patch, retry, compaction — skip
             return null;
     }
 }
