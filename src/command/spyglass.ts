@@ -2,7 +2,7 @@ import {PluginInput} from '@opencode-ai/plugin'
 import {openWindow, stopWindow} from "../window";
 import {startBridge, stopBridge} from "../server";
 import {clearSessions} from '../service/session-storage.service';
-import {messageCache} from '../index';
+import {messageCache} from '../holder/message-cache.service';
 
 export async function handleCommand(sessionId: string, args: string[], plugin: PluginInput) {
 	const requested = args[0]?.toLowerCase();

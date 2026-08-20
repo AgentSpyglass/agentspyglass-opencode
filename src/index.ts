@@ -9,7 +9,7 @@ import {StepFinishPart} from "@opencode-ai/sdk/v2";
 import type {TokenBreakdown} from './model/definitions';
 import {calculateContext} from "./util/opencode.util";
 
-export const messageCache = new Map<string, { role: 'user' | 'assistant'; parentID?: string }>();
+import { messageCache } from './holder/message-cache.service';
 
 let SESSION_ID: string | undefined;
 export const AgentSpyglass: Plugin = async (plugin: PluginInput) => {
