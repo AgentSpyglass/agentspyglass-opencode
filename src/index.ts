@@ -9,7 +9,7 @@ import {StepFinishPart} from "@opencode-ai/sdk/v2";
 import type {TokenBreakdown} from './model/definitions';
 import {calculateContext} from "./util/opencode.util";
 
-const messageCache = new Map<string, { role: 'user' | 'assistant'; parentID?: string }>();
+export const messageCache = new Map<string, { role: 'user' | 'assistant'; parentID?: string }>();
 
 let SESSION_ID: string | undefined;
 export const AgentSpyglass: Plugin = async (plugin: PluginInput) => {
@@ -23,6 +23,7 @@ export const AgentSpyglass: Plugin = async (plugin: PluginInput) => {
 			stopBridge();
 			stopWindow();
 			clearSessions();
+			messageCache.clear();
 		},
 
 		"chat.message": async (input: { sessionID: string; agent?: string; model?: { providerID: string; modelID: string; }; messageID?: string; variant?: string; }, output: { message: unknown; parts: Part[]; }) => {
@@ -118,10 +119,10 @@ async function handlePartUpdated(plugin: PluginInput, part: Part) {
                         role: info?.role ?? 'assistant',
                         parentID: info?.parentID
                     };
-                    messageCache.set(part.messageID, cached);
                 } catch {
                     cached = { role: 'assistant' };
                 }
+                messageCache.set(part.messageID, cached);
             }
             await messageEventHandle(plugin, part.sessionID, part.text, cached.role, part.messageID, cached.parentID);
             return;

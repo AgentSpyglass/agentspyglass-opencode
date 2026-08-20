@@ -2,6 +2,7 @@ import {PluginInput} from '@opencode-ai/plugin'
 import {openWindow, stopWindow} from "../window";
 import {startBridge, stopBridge} from "../server";
 import {clearSessions} from '../service/session-storage.service';
+import {messageCache} from '../index';
 
 export async function handleCommand(sessionId: string, args: string[], plugin: PluginInput) {
 	const requested = args[0]?.toLowerCase();
@@ -9,6 +10,7 @@ export async function handleCommand(sessionId: string, args: string[], plugin: P
         stopWindow();
         stopBridge();
         clearSessions();
+        messageCache.clear();
         plugin.client.tui.showToast({
             body: {
                 message: `AgentSpyglass off.`,
