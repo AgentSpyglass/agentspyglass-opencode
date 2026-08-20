@@ -68,7 +68,6 @@ export function stopBridge() {
     server = undefined;
 }
 
-// TODO: send todo event to specific ws, not broadcast
 async function populateClient(ws: ServerWebSocket, plugin: PluginInput) {
     const sessionId = currentSessionId;
     if (!sessionId) return;
@@ -135,26 +134,27 @@ async function populateClient(ws: ServerWebSocket, plugin: PluginInput) {
         const {data: messages} = await plugin.client.session.messages({
             path: { id: sessionId }
         });
-        if (!messages) return;
 
-        for (const message of messages) {
-            const msgInfo = message.info as any;
-            const role = msgInfo?.role as 'user' | 'assistant' | undefined;
-            const messageID = msgInfo?.id as string | undefined;
-            const parentID = msgInfo?.parentID as string | undefined;
+        if (messages) {
+            for (const message of messages) {
+                const msgInfo = message.info as any;
+                const role = msgInfo?.role as 'user' | 'assistant' | undefined;
+                const messageID = msgInfo?.id as string | undefined;
+                const parentID = msgInfo?.parentID as string | undefined;
 
-            const messageContext = role === 'assistant'
-                ? {
-                    agent: msgInfo.agent as string | undefined,
-                    modelID: msgInfo.modelID as string | undefined,
-                    providerID: msgInfo.providerID as string | undefined,
-                }
-                : undefined;
+                const messageContext = role === 'assistant'
+                    ? {
+                        agent: msgInfo.agent as string | undefined,
+                        modelID: msgInfo.modelID as string | undefined,
+                        providerID: msgInfo.providerID as string | undefined,
+                    }
+                    : undefined;
 
-            for (const part of message.parts) {
-                const event = await convertPartToEvent(part, plugin, messageContext, role, messageID, parentID);
-                if (event && ws.readyState === 1) {
-                    ws.send(JSON.stringify(event));
+                for (const part of message.parts) {
+                    const event = await convertPartToEvent(part, plugin, messageContext, role, messageID, parentID);
+                    if (event && ws.readyState === 1) {
+                        ws.send(JSON.stringify(event));
+                    }
                 }
             }
         }
@@ -174,6 +174,10 @@ async function convertPartToEvent(
 ): Promise<AgentEvent | MessageEvent | StatusEvent | ToolEvent | null> {
     switch (part.type) {
         case 'text':
+            // Skip empty text parts (can occur mid-generation during history fetch)
+            if (!part.text || part.text.length === 0) {
+                return null;
+            }
             return {
                 type: 'message',
                 sessionId: part.sessionID,

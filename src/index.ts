@@ -124,7 +124,12 @@ async function handlePartUpdated(plugin: PluginInput, part: Part) {
                 }
                 messageCache.set(part.messageID, cached);
             }
-            await messageEventHandle(plugin, part.sessionID, part.text, cached.role, part.messageID, cached.parentID);
+
+            // Only broadcast if text is non-empty (skip initial empty part allocation)
+            if (part.text && part.text.length > 0) {
+                cached.text = part.text;
+                await messageEventHandle(plugin, part.sessionID, part.text, cached.role, part.messageID, cached.parentID);
+            }
             return;
         }
     }
