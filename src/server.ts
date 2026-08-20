@@ -136,11 +136,14 @@ async function populateClient(ws: ServerWebSocket, plugin: PluginInput) {
         });
 
         if (messages) {
+            console.log(`[populateClient] Processing ${messages.length} messages`);
             for (const message of messages) {
                 const msgInfo = message.info as any;
                 const role = msgInfo?.role as 'user' | 'assistant' | undefined;
                 const messageID = msgInfo?.id as string | undefined;
                 const parentID = msgInfo?.parentID as string | undefined;
+
+                console.log(`[populateClient] Message: role=${role}, messageID=${messageID}, parts=${message.parts.length}`);
 
                 const messageContext = role === 'assistant'
                     ? {
@@ -151,7 +154,9 @@ async function populateClient(ws: ServerWebSocket, plugin: PluginInput) {
                     : undefined;
 
                 for (const part of message.parts) {
+                    console.log(`[populateClient] Part: type=${part.type}, text=${part.type === 'text' ? `"${part.text}"` : 'N/A'}, textLength=${part.type === 'text' ? part.text?.length : 'N/A'}`);
                     const event = await convertPartToEvent(part, plugin, messageContext, role, messageID, parentID);
+                    console.log(`[populateClient] Event: ${event ? event.type : 'null'}`);
                     if (event && ws.readyState === 1) {
                         ws.send(JSON.stringify(event));
                     }
@@ -174,10 +179,13 @@ async function convertPartToEvent(
 ): Promise<AgentEvent | MessageEvent | StatusEvent | ToolEvent | null> {
     switch (part.type) {
         case 'text':
+            console.log(`[convertPartToEvent] text case: part.text="${part.text}", length=${part.text?.length}, isEmpty=${!part.text || part.text.length === 0}`);
             // Skip empty text parts (can occur mid-generation during history fetch)
             if (!part.text || part.text.length === 0) {
+                console.log(`[convertPartToEvent] Returning null for empty text`);
                 return null;
             }
+            console.log(`[convertPartToEvent] Returning message event with content length ${part.text.length}`);
             return {
                 type: 'message',
                 sessionId: part.sessionID,
