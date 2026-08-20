@@ -159,13 +159,26 @@ async function populateClient(ws: ServerWebSocket, plugin: PluginInput) {
         const { data: children } = await plugin.client.session.children({
             path: { id: sessionId }
         });
+        if (!messages) return;
 
-        if (children) {
-            for (const child of children) {
-                try {
-                    await populateSession(ws, plugin, child.id);
-                } catch (error) {
-                    console.error(`Failed to populate child session ${child.id}:`, error);
+        for (const message of messages) {
+            const msgInfo = message.info as any;
+            const role = msgInfo?.role as 'user' | 'assistant' | undefined;
+            const messageID = msgInfo?.id as string | undefined;
+            const parentID = msgInfo?.parentID as string | undefined;
+
+            const messageContext = role === 'assistant'
+                ? {
+                    agent: msgInfo.agent as string | undefined,
+                    modelID: msgInfo.modelID as string | undefined,
+                    providerID: msgInfo.providerID as string | undefined,
+                }
+                : undefined;
+
+            for (const part of message.parts) {
+                const event = await convertPartToEvent(part, plugin, messageContext, role, messageID, parentID);
+                if (event && ws.readyState === 1) {
+                    ws.send(JSON.stringify(event));
                 }
             }
         }
@@ -177,14 +190,20 @@ async function populateClient(ws: ServerWebSocket, plugin: PluginInput) {
 async function convertPartToEvent(
     part: Part,
     plugin: PluginInput,
-    messageContext?: { agent?: string; modelID?: string; providerID?: string }
+    messageContext?: { agent?: string; modelID?: string; providerID?: string },
+    role?: 'user' | 'assistant',
+    messageID?: string,
+    parentID?: string
 ): Promise<AgentEvent | MessageEvent | StatusEvent | ToolEvent | null> {
     switch (part.type) {
         case 'text':
             return {
                 type: 'message',
                 sessionId: part.sessionID,
-                content: part.text
+                content: part.text,
+                role: role ?? 'assistant',
+                messageID: messageID ?? part.messageID,
+                parentID
             };
 
         case 'step-start':
