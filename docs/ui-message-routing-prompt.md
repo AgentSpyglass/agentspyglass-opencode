@@ -134,9 +134,16 @@ Verify:
 - @agentspyglass/core PR #7 merged (MessageEvent interface)
 - @agentspyglass/opencode PR #8 merged (plugin sends routing fields)
 
+## Desktop App Location
+
+UI implementation goes in: `/home/vitor/Documentos/AgentSpyglass/agentspyglass/`
+
+This is the Tauri desktop app that connects to the plugin WebSocket.
+
 ## Questions?
 
 Check:
 - `/home/vitor/Documentos/AgentSpyglass/agentspyglass-core/src/event.definitions.ts` — wire types
 - `/home/vitor/Documentos/AgentSpyglass/agentspyglass-opencode/src/server.ts` — how routing populated
 - `/home/vitor/Documentos/AgentSpyglass/agentspyglass-opencode/src/index.ts` — live event handling
+- `/home/vitor/Documentos/AgentSpyglass/agentspyglass/` — desktop app (implement UI here)
