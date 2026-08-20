@@ -29,9 +29,9 @@ export async function startBridge(plugin: PluginInput, sessionId: string) {
             async open(ws) {
                 clients.add(ws);
                 try {
-                    await populateClient(ws, plugin);
+                    populateClient(ws, plugin).then();
                 } catch (error) {
-                    plugin.client.tui.showToast({
+                    await plugin.client.tui.showToast({
                         body: {
                             message: `AgentSpyglass failed to load history: ${error}`,
                             variant: 'error'
@@ -69,10 +69,7 @@ export function stopBridge() {
 }
 
 async function populateSession(ws: ServerWebSocket, plugin: PluginInput, sessionId: string) {
-    // Fetch session with v2-enriched data (cost, tokens, agent, model)
     const session = await findSession(sessionId, plugin);
-
-    // Send initial AgentEvent with real agent/model/provider from v2 Session
     if (session.agent || session.model) {
         const totalTokens = session.tokens ? session.tokens.input + session.tokens.output + session.tokens.reasoning : 0;
         if (ws.readyState === 1) {
@@ -82,7 +79,6 @@ async function populateSession(ws: ServerWebSocket, plugin: PluginInput, session
                 name: session.agent ?? '',
                 model: session.model?.id ?? '',
                 provider: session.model?.providerID ?? '',
-                prompt: '',
                 role: session.parentID ? 'subagent' : 'primary',
                 cost: session.cost ?? 0,
                 tokens: totalTokens,
@@ -91,7 +87,6 @@ async function populateSession(ws: ServerWebSocket, plugin: PluginInput, session
         }
     }
 
-    // Send initial StatusEvent with session-level cost and token totals
     if ((session.cost !== undefined && session.cost > 0) || session.tokens) {
         if (ws.readyState === 1) {
             ws.send(JSON.stringify({
@@ -110,7 +105,6 @@ async function populateSession(ws: ServerWebSocket, plugin: PluginInput, session
         }
     }
 
-    // fetch todos and send to specific client
     const {data: todos} = await plugin.client.session.todo({
         path: { id: sessionId }
     });
@@ -126,14 +120,12 @@ async function populateSession(ws: ServerWebSocket, plugin: PluginInput, session
         } satisfies TodoEvent));
     }
 
-    // fetch all messages, convert parts, send to specific client
     const {data: messages} = await plugin.client.session.messages({
         path: { id: sessionId }
     });
     if (!messages) return;
 
     for (const message of messages) {
-        // Extract agent/model context from AssistantMessage wrapper
         const msgInfo = message.info as any;
         const messageContext = msgInfo?.role === 'assistant'
             ? {
@@ -152,20 +144,17 @@ async function populateSession(ws: ServerWebSocket, plugin: PluginInput, session
     }
 }
 
-// TODO: send todo event to specific ws, not broadcast
 async function populateClient(ws: ServerWebSocket, plugin: PluginInput) {
     const sessionId = currentSessionId;
     if (!sessionId) return;
 
     try {
-        // Populate primary session
         await populateSession(ws, plugin, sessionId);
     } catch (error) {
         clients.delete(ws);
         throw error;
     }
 
-    // Fetch and populate child sessions (isolated — failures don't break primary)
     try {
         const { data: children } = await plugin.client.session.children({
             path: { id: sessionId }
@@ -176,7 +165,6 @@ async function populateClient(ws: ServerWebSocket, plugin: PluginInput) {
                 try {
                     await populateSession(ws, plugin, child.id);
                 } catch (error) {
-                    // Log but don't abort other children or break client connection
                     console.error(`Failed to populate child session ${child.id}:`, error);
                 }
             }
