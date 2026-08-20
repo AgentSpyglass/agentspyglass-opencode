@@ -138,9 +138,12 @@ async function populateClient(ws: ServerWebSocket, plugin: PluginInput) {
         if (!messages) return;
 
         for (const message of messages) {
-            // Extract agent/model context from AssistantMessage wrapper
             const msgInfo = message.info as any;
-            const messageContext = msgInfo?.role === 'assistant'
+            const role = msgInfo?.role as 'user' | 'assistant' | undefined;
+            const messageID = msgInfo?.id as string | undefined;
+            const parentID = msgInfo?.parentID as string | undefined;
+
+            const messageContext = role === 'assistant'
                 ? {
                     agent: msgInfo.agent as string | undefined,
                     modelID: msgInfo.modelID as string | undefined,
@@ -149,7 +152,7 @@ async function populateClient(ws: ServerWebSocket, plugin: PluginInput) {
                 : undefined;
 
             for (const part of message.parts) {
-                const event = await convertPartToEvent(part, plugin, messageContext);
+                const event = await convertPartToEvent(part, plugin, messageContext, role, messageID, parentID);
                 if (event && ws.readyState === 1) {
                     ws.send(JSON.stringify(event));
                 }
@@ -164,14 +167,20 @@ async function populateClient(ws: ServerWebSocket, plugin: PluginInput) {
 async function convertPartToEvent(
     part: Part,
     plugin: PluginInput,
-    messageContext?: { agent?: string; modelID?: string; providerID?: string }
+    messageContext?: { agent?: string; modelID?: string; providerID?: string },
+    role?: 'user' | 'assistant',
+    messageID?: string,
+    parentID?: string
 ): Promise<AgentEvent | MessageEvent | StatusEvent | ToolEvent | null> {
     switch (part.type) {
         case 'text':
             return {
                 type: 'message',
                 sessionId: part.sessionID,
-                content: part.text
+                content: part.text,
+                role: role ?? 'assistant',
+                messageID: messageID ?? part.messageID,
+                parentID
             };
 
         case 'step-start':

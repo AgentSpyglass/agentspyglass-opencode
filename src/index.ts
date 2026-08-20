@@ -9,6 +9,8 @@ import {StepFinishPart} from "@opencode-ai/sdk/v2";
 import type {TokenBreakdown} from './model/definitions';
 import {calculateContext} from "./util/opencode.util";
 
+const messageCache = new Map<string, { role: 'user' | 'assistant'; parentID?: string }>();
+
 let SESSION_ID: string | undefined;
 export const AgentSpyglass: Plugin = async (plugin: PluginInput) => {
 	return {
@@ -104,8 +106,25 @@ async function handlePartUpdated(plugin: PluginInput, part: Part) {
             await statusEventHandle(plugin, part.sessionID, part.type, tokens, cost, contextUsed, tokenBreakdown);
             break;
         }
-        case 'text':
-            await messageEventHandle(plugin, part.sessionID, part.text);
-            break;
+        case 'text': {
+            let cached = messageCache.get(part.messageID);
+            if (!cached) {
+                try {
+                    const { data: message } = await plugin.client.session.message({
+                        path: { id: part.sessionID, messageID: part.messageID }
+                    });
+                    const info = message?.info as any;
+                    cached = {
+                        role: info?.role ?? 'assistant',
+                        parentID: info?.parentID
+                    };
+                    messageCache.set(part.messageID, cached);
+                } catch {
+                    cached = { role: 'assistant' };
+                }
+            }
+            await messageEventHandle(plugin, part.sessionID, part.text, cached.role, part.messageID, cached.parentID);
+            return;
+        }
     }
 }

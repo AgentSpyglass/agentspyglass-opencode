@@ -111,13 +111,23 @@ export async function statusEventHandle(
     } as StatusEvent);
 }
 
-export async function messageEventHandle(plugin: PluginInput, sessionId: string, content: string) {
+export async function messageEventHandle(
+    plugin: PluginInput,
+    sessionId: string,
+    content: string,
+    role: 'user' | 'assistant',
+    messageID: string,
+    parentID?: string
+) {
     await verifySession(plugin, sessionId);
 
     broadcastEvent({
         type: 'message',
         sessionId,
-        content
+        content,
+        role,
+        messageID,
+        parentID
     } as MessageEvent);
 }
 
