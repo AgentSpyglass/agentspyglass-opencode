@@ -28,7 +28,8 @@ export async function agentEventHandle(plugin: PluginInput, sessionId: string, p
             role,
             cost: existing?.cost ?? session?.cost ?? 0,
             parentId: session?.parentID,
-            tokens: computedTokens
+            tokens: computedTokens,
+            title: session?.title
         }
     );
 
@@ -43,6 +44,7 @@ export async function agentEventHandle(plugin: PluginInput, sessionId: string, p
         cost: session?.cost ?? 0,
         tokens: computedTokens?.total ?? 0,
         targetSessionId: session?.parentID,
+        title: session?.title,
     } as AgentEvent & { targetSessionId?: string });
 }
 
