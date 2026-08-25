@@ -15,4 +15,5 @@ export type SessionHold = {
     parentId?: string;
     role: 'primary' | 'subagent' | string;
     tokens?: TokenBreakdown;
+    title?: string;
 }

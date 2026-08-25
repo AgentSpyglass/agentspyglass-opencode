@@ -83,6 +83,7 @@ async function populateSession(ws: ServerWebSocket, plugin: PluginInput, session
                 cost: session.cost ?? 0,
                 tokens: totalTokens,
                 targetSessionId: session.parentID,
+                title: session.title,
             } as AgentEvent & { targetSessionId?: string }));
         }
     }
@@ -149,38 +150,21 @@ async function populateClient(ws: ServerWebSocket, plugin: PluginInput) {
     if (!sessionId) return;
 
     try {
-        await populateSession(ws, plugin, sessionId);
+        populateSession(ws, plugin, sessionId).then(() => populateChildren(ws, plugin, sessionId));
     } catch (error) {
         clients.delete(ws);
         throw error;
     }
+}
 
+async function populateChildren(ws: ServerWebSocket, plugin: PluginInput, sessionId: string) {
     try {
         const { data: children } = await plugin.client.session.children({
             path: { id: sessionId }
         });
-        if (!messages) return;
 
-        for (const message of messages) {
-            const msgInfo = message.info as any;
-            const role = msgInfo?.role as 'user' | 'assistant' | undefined;
-            const messageID = msgInfo?.id as string | undefined;
-            const parentID = msgInfo?.parentID as string | undefined;
-
-            const messageContext = role === 'assistant'
-                ? {
-                    agent: msgInfo.agent as string | undefined,
-                    modelID: msgInfo.modelID as string | undefined,
-                    providerID: msgInfo.providerID as string | undefined,
-                }
-                : undefined;
-
-            for (const part of message.parts) {
-                const event = await convertPartToEvent(part, plugin, messageContext, role, messageID, parentID);
-                if (event && ws.readyState === 1) {
-                    ws.send(JSON.stringify(event));
-                }
-            }
+        for (var child of children ?? []) {
+            await populateSession(ws, plugin, child.id);
         }
     } catch (error) {
         console.error(`Failed to fetch child sessions:`, error);
@@ -281,6 +265,7 @@ async function convertPartToEvent(
                 provider: messageContext?.providerID ?? '?',
                 prompt: '',
                 targetSessionId: agentSession?.parentID,
+                title: agentSession?.title,
             } as AgentEvent & { targetSessionId?: string };
         }
 
