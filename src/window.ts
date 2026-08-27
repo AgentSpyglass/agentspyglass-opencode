@@ -1,21 +1,21 @@
 import path from "node:path"
 import {type ChildProcess, spawn} from "node:child_process"
+import {ensureDesktopApp} from "./download"
 
 let windowProcess: ChildProcess | undefined;
 export async function openWindow(pluginDir: string) {
     if (windowProcess && !windowProcess.killed) return;
 
     const devMode = process.env.AGENTSPYGLASS_DEV === "1";
-    const desktopDir = path.join(pluginDir, "..", "agentspyglass");
     if (devMode) {
+        const desktopDir = path.join(pluginDir, "..", "agentspyglass");
         windowProcess = spawn("npm", ["run", "tauri", "dev"], {
             cwd: desktopDir,
             stdio: "ignore",
             detached: true,
         });
     } else {
-        const binName = process.platform === "win32" ? "agentspyglass-window.exe" : "agentspyglass-window";
-        const binPath = path.join(desktopDir, "src-tauri", "target", "release", binName);
+        const binPath = await ensureDesktopApp()
         windowProcess = spawn(binPath, [], {stdio: "ignore", detached: true})
     }
 
