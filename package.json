@@ -12,7 +12,7 @@
         "src"
     ],
     "dependencies": {
-        "@agentspyglass/core": "file:../agentspyglass-core",
+        "@agentspyglass/core": "github:AgentSpyglass/agentspyglass-core",
         "@opencode-ai/plugin": "latest",
         "@opencode-ai/sdk": "^1.18.14"
     },
