@@ -2,7 +2,6 @@ import fs from "node:fs/promises"
 import {createWriteStream} from "node:fs"
 import path from "node:path"
 import os from "node:os"
-import {execFileSync} from "node:child_process"
 import {Readable} from "node:stream"
 
 interface GitHubRelease {
@@ -10,7 +9,7 @@ interface GitHubRelease {
     assets: Array<{name: string; browser_download_url: string}>
 }
 
-type AssetType = "appimage" | "macos" | "windows-exe" | "windows-msi"
+type AssetType = "appimage" | "macos" | "windows-exe"
 
 const REPO = "AgentSpyglass/agentspyglass"
 const API_URL = `https://api.github.com/repos/${REPO}/releases/latest`
@@ -20,7 +19,7 @@ const FETCH_TIMEOUT = 30_000
 /** Per-version lock to prevent concurrent downloads of the same version. */
 const locks = new Map<string, Promise<string>>()
 
-function getPlatformSpec(): {type: Exclude<AssetType, "windows-msi">; archPatterns: string[]} {
+function getPlatformSpec(): {type: AssetType; archPatterns: string[]} {
     const platform = process.platform
     const arch = process.arch
 
@@ -59,13 +58,8 @@ function matchAsset(release: GitHubRelease): {name: string; url: string; type: A
         if (spec.type === "macos" && lower.endsWith(".app.tar.gz")) {
             return {name: asset.name, url: asset.browser_download_url, type: "macos"}
         }
-        if (spec.type === "windows-exe") {
-            if (lower.endsWith(".msi")) {
-                return {name: asset.name, url: asset.browser_download_url, type: "windows-msi"}
-            }
-            if (lower.endsWith(".exe")) {
-                return {name: asset.name, url: asset.browser_download_url, type: "windows-exe"}
-            }
+        if (spec.type === "windows-exe" && lower.endsWith(".exe")) {
+            return {name: asset.name, url: asset.browser_download_url, type: "windows-exe"}
         }
     }
 
@@ -174,6 +168,7 @@ async function extractAsset(assetPath: string, cacheDir: string, type: AssetType
 
     if (type === "macos") {
         try {
+            const {execFileSync} = await import("node:child_process")
             execFileSync("tar", ["-xzf", assetPath, "-C", cacheDir], {stdio: "pipe"})
         } catch (err) {
             throw new Error(`Extraction failed: ${err instanceof Error ? err.message : err}`)
@@ -183,22 +178,7 @@ async function extractAsset(assetPath: string, cacheDir: string, type: AssetType
     }
 
     if (type === "windows-exe") {
-        try {
-            execFileSync(assetPath, ["/S", `/D=${cacheDir}`], {stdio: "pipe"})
-        } catch (err) {
-            throw new Error(`Silent install failed: ${err instanceof Error ? err.message : err}`)
-        }
-        await fs.rm(assetPath).catch(() => {})
-        return
-    }
-
-    if (type === "windows-msi") {
-        try {
-            execFileSync("msiexec", ["/qn", "/i", assetPath, `INSTALLDIR=${cacheDir}`], {stdio: "pipe"})
-        } catch (err) {
-            throw new Error(`MSI installation failed: ${err instanceof Error ? err.message : err}`)
-        }
-        await fs.rm(assetPath).catch(() => {})
+        await fs.rename(assetPath, path.join(cacheDir, "AgentSpyglass.exe"))
         return
     }
 }
