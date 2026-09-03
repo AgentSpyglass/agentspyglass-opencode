@@ -54,6 +54,7 @@ export const AgentSpyglass: Plugin = async (plugin: PluginInput) => {
 
             if (cmd === 'spyglass') {
 				await handleCommand(SESSION_ID, args.split(/\s+/), plugin);
+				output.parts.length = 0;
 				return;
 			}
 		},
