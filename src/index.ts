@@ -16,7 +16,7 @@ export const AgentSpyglass: Plugin = async (plugin: PluginInput) => {
 	return {
 		config: async (ocConfig) => {
 			ocConfig.command ??= {}
-			ocConfig.command['spyglass'] = {template: 'Do not explain, acknowledge, or comment. Output nothing at all.', description: 'Toggle SpyGlass view.'}
+			ocConfig.command['spyglass'] = {template: '', description: 'Toggle SpyGlass view.'}
 		},
 
 		dispose: async () => {
@@ -53,7 +53,15 @@ export const AgentSpyglass: Plugin = async (plugin: PluginInput) => {
             SESSION_ID = input.sessionID;
 
             if (cmd === 'spyglass') {
+				if (SESSION_ID) {
+					try {
+						await plugin.client.session.abort({ path: { id: SESSION_ID } });
+					} catch {
+						// Abort best-effort: session may already be gone
+					}
+				}
 				await handleCommand(SESSION_ID, args.split(/\s+/), plugin);
+				output.parts.length = 0;
 				return;
 			}
 		},
