@@ -8,15 +8,20 @@ import {clearSessions} from './service/session-storage.service';
 import {StepFinishPart} from "@opencode-ai/sdk/v2";
 import type {TokenBreakdown} from './model/definitions';
 import {calculateContext} from "./util/opencode.util";
+import {createOpencodeClient} from '@opencode-ai/sdk/v2';
 
 import { messageCache } from './holder/message-cache.service';
 
 let SESSION_ID: string | undefined;
+const pendingRevertSessions = new Set<string>();
+
 export const AgentSpyglass: Plugin = async (plugin: PluginInput) => {
+	const v2Client = createOpencodeClient({ baseUrl: plugin.serverUrl.toString() });
+
 	return {
 		config: async (ocConfig) => {
 			ocConfig.command ??= {}
-			ocConfig.command['spyglass'] = {template: 'Do not explain, acknowledge, or comment. Output nothing at all.', description: 'Toggle SpyGlass view.'}
+			ocConfig.command['spyglass'] = {template: '', description: 'Toggle SpyGlass view.'}
 		},
 
 		dispose: async () => {
@@ -53,7 +58,11 @@ export const AgentSpyglass: Plugin = async (plugin: PluginInput) => {
             SESSION_ID = input.sessionID;
 
             if (cmd === 'spyglass') {
+				if (SESSION_ID) {
+					pendingRevertSessions.add(SESSION_ID);
+				}
 				await handleCommand(SESSION_ID, args.split(/\s+/), plugin);
+				output.parts.length = 0;
 				return;
 			}
 		},
@@ -61,6 +70,22 @@ export const AgentSpyglass: Plugin = async (plugin: PluginInput) => {
         event: async (input: { event: Event }) => {
             const { event } = input;
             switch (event.type) {
+                case 'message.updated': {
+                    const sessionID = event.properties.info.sessionID;
+                    if (pendingRevertSessions.has(sessionID) && event.properties.info.role === 'assistant') {
+                        const messageID = event.properties.info.id;
+                        pendingRevertSessions.delete(sessionID);
+                        try {
+                            await v2Client.session.revert({
+                                sessionID,
+                                messageID
+                            });
+                        } catch {
+                            // Revert best-effort
+                        }
+                    }
+                    return;
+                }
                 case 'todo.updated':
                     await todoEventHandle(
                         plugin,
