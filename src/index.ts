@@ -16,7 +16,7 @@ export const AgentSpyglass: Plugin = async (plugin: PluginInput) => {
 	return {
 		config: async (ocConfig) => {
 			ocConfig.command ??= {}
-			ocConfig.command['spyglass'] = {template: 'Do not explain, acknowledge, or comment. Output nothing at all.', description: 'Toggle SpyGlass view.'}
+			ocConfig.command['spyglass'] = {template: '', description: 'Toggle SpyGlass view.'}
 		},
 
 		dispose: async () => {
